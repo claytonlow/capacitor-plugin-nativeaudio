@@ -18,7 +18,9 @@ import org.json.JSONException;
 import android.content.Context;
 import android.content.res.AssetFileDescriptor;
 import android.content.res.AssetManager;
+import android.media.AudioFocusRequest;
 import android.media.AudioManager;
+import android.os.Build;
 import android.util.Log;
 import android.view.KeyEvent;
 
@@ -53,8 +55,10 @@ public class NativeAudio extends CordovaPlugin implements AudioManager.OnAudioFo
     private static ArrayList<NativeAudioAsset> resumeList;
     private static HashMap<String, CallbackContext> completeCallbacks;
     private boolean fadeMusic = false;
+	private AudioFocusRequest audioFocusRequest;
 
-    public void setOptions(JSONObject options) {
+
+	public void setOptions(JSONObject options) {
 		if(options != null) {
 			if(options.has(OPT_FADE_MUSIC)) this.fadeMusic = options.optBoolean(OPT_FADE_MUSIC);
 		}
@@ -106,6 +110,8 @@ public class NativeAudio extends CordovaPlugin implements AudioManager.OnAudioFo
 	private PluginResult executePlayOrLoop(String action, JSONArray data) {
 		final String audioID;
 		try {
+			requestAudioFocus();
+
 			audioID = data.getString(0);
 			//Log.d( LOGTAG, "play - " + audioID );
 
@@ -116,14 +122,15 @@ public class NativeAudio extends CordovaPlugin implements AudioManager.OnAudioFo
 				else
 					asset.play(new Callable<Void>() {
                         public Void call() throws Exception {
-				if (completeCallbacks != null) {
-				    CallbackContext callbackContext = completeCallbacks.get(audioID);
-				    if (callbackContext != null) {
-					JSONObject done = new JSONObject();
-					done.put("id", audioID);
-					callbackContext.sendPluginResult(new PluginResult(Status.OK, done));
-				    }
-				}
+							releaseAudioFocus();
+							if (completeCallbacks != null) {
+								CallbackContext callbackContext = completeCallbacks.get(audioID);
+								if (callbackContext != null) {
+								JSONObject done = new JSONObject();
+								done.put("id", audioID);
+								callbackContext.sendPluginResult(new PluginResult(Status.OK, done));
+								}
+							}
                             return null;
                         }
                     });
@@ -201,13 +208,13 @@ public class NativeAudio extends CordovaPlugin implements AudioManager.OnAudioFo
 	}
 	@Override
 	protected void pluginInitialize() {
-		AudioManager am = (AudioManager)cordova.getActivity().getSystemService(Context.AUDIO_SERVICE);
+		//AudioManager am = (AudioManager)cordova.getActivity().getSystemService(Context.AUDIO_SERVICE);
 
-	        int result = am.requestAudioFocus(this,
-	                // Use the music stream.
-	                AudioManager.STREAM_MUSIC,
-	                // Request permanent focus.
-	                AudioManager.AUDIOFOCUS_GAIN);
+//	        int result = am.requestAudioFocus(this,
+//	                // Use the music stream.
+//	                AudioManager.STREAM_MUSIC,
+//	                // Request permanent focus.
+//	                AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK);
 
 		// Allow android to receive the volume events
 		this.webView.setButtonPlumbedToJs(KeyEvent.KEYCODE_VOLUME_DOWN, false);
@@ -332,4 +339,33 @@ public class NativeAudio extends CordovaPlugin implements AudioManager.OnAudioFo
             asset.resume();
         }
     }
+
+	public void requestAudioFocus() {
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+
+			audioFocusRequest =
+					new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+							.build();
+			getAudioManager().requestAudioFocus(audioFocusRequest);
+
+		} else {
+
+			getAudioManager().requestAudioFocus(this, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK);
+		}
+	}
+
+	public void releaseAudioFocus() {
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+			if (audioFocusRequest != null) {
+				getAudioManager().abandonAudioFocusRequest(audioFocusRequest);
+				audioFocusRequest = null;
+			}
+		} else {
+			getAudioManager().abandonAudioFocus(null);
+		}
+	}
+
+	private AudioManager getAudioManager() {
+		return (AudioManager)cordova.getActivity().getSystemService(Context.AUDIO_SERVICE);
+	}
 }
